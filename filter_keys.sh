@@ -1,12 +1,11 @@
 #!/bin/bash
 
 # ============================================
-# VPN KEY FILTER v9.0 - УВЕЛИЧЕННОЕ ВРЕМЯ
-# Проверяет ключи через Xray с таймаутом 10с
+# VPN KEY FILTER v10.0 - ПРОВЕРКА ЧЕРЕЗ CURL
 # ============================================
 
 echo "========================================="
-echo "VPN Key Filter v9.0 (Увеличенный таймаут)"
+echo "VPN Key Filter v10.0 (Curl Mode)"
 echo "Время запуска: $(date)"
 echo "========================================="
 
@@ -14,12 +13,12 @@ echo "========================================="
 SOURCE_URL="https://github.com/defater-123/Def-key-search/raw/refs/heads/main/key1.txt"
 WORK_FILE="WorkKey.txt"
 SOURCE_FILE="key1.txt"
-TIMEOUT_PER_KEY=10  # ← УВЕЛИЧИЛ ДО 10 СЕКУНД
-MAX_TOTAL_TIME=1800 # ← 30 МИНУТ (для 150 ключей)
+TIMEOUT=10
+MAX_TOTAL_TIME=1800
 
 echo ""
 echo "📋 НАСТРОЙКИ:"
-echo "   Таймаут на ключ: ${TIMEOUT_PER_KEY}с"
+echo "   Таймаут на ключ: ${TIMEOUT}с"
 echo "   Максимальное время: ${MAX_TOTAL_TIME}с (30 минут)"
 echo ""
 
@@ -30,7 +29,6 @@ if [ -f "$WORK_FILE" ] && [ -s "$WORK_FILE" ]; then
     COUNT=$(wc -l < "$WORK_FILE")
     echo "✅ Найден существующий $WORK_FILE ($COUNT ключей)"
     KEYS_TO_CHECK="$WORK_FILE"
-    IS_FIRST_RUN=false
 else
     echo "📥 WorkKey.txt не найден. Скачиваю ключи впервые..."
     curl -L -o "$SOURCE_FILE" "$SOURCE_URL"
@@ -43,59 +41,55 @@ else
     COUNT=$(wc -l < "$SOURCE_FILE")
     echo "✅ Скачано $COUNT ключей"
     KEYS_TO_CHECK="$SOURCE_FILE"
-    IS_FIRST_RUN=true
 fi
 
-# ----- ШАГ 2: УСТАНОВКА XRAY -----
-echo ""
-echo "🔧 ШАГ 2: Установка Xray..."
-
-if ! command -v xray &> /dev/null; then
-    echo "⬇️  Скачиваю Xray..."
-    wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -O xray.zip
-    unzip -q xray.zip
-    chmod +x xray
-    sudo mv xray /usr/local/bin/
-    rm -f xray.zip
-    echo "✅ Xray установлен"
-else
-    echo "✅ Xray уже установлен"
-fi
-
-# ----- ШАГ 3: ФУНКЦИЯ ПРОВЕРКИ (ЧЕРЕЗ XRAY) -----
+# ----- ШАГ 2: ФУНКЦИЯ ПРОВЕРКИ КЛЮЧА (через curl) -----
 check_key() {
     local key="$1"
-    local num="$2"
     
-    # Создаем временный конфиг
-    cat > "/tmp/config_${num}.json" << EOF
-{
-  "log": {"loglevel": "error"},
-  "inbounds": [{"port": 1080, "protocol": "socks"}],
-  "outbounds": [{"protocol": "freedom"}]
-}
-EOF
+    # Извлекаем IP, порт и протокол из ключа
+    # Поддерживает: vless://, vmess://, trojan://, shadowsocks://
     
-    # Запускаем Xray с увеличенным таймаутом
-    # Добавляем --trace для отладки (покажет ошибки)
-    timeout "$TIMEOUT_PER_KEY" xray run \
-        -config "/tmp/config_${num}.json" \
-        -outbound "$key" \
-        > /dev/null 2>&1
+    # Пробуем извлечь IP/домен и порт
+    if [[ "$key" =~ @([^:]+):([0-9]+) ]]; then
+        # vless://uuid@IP:PORT
+        IP="${BASH_REMATCH[1]}"
+        PORT="${BASH_REMATCH[2]}"
+        PROTOCOL="vless"
+    elif [[ "$key" =~ ://([^@]+)@([^:]+):([0-9]+) ]]; then
+        # vmess://uuid@IP:PORT
+        IP="${BASH_REMATCH[2]}"
+        PORT="${BASH_REMATCH[3]}"
+        PROTOCOL="vmess"
+    elif [[ "$key" =~ ^([a-zA-Z0-9.-]+):([0-9]+) ]]; then
+        # IP:PORT
+        IP="${BASH_REMATCH[1]}"
+        PORT="${BASH_REMATCH[2]}"
+        PROTOCOL="direct"
+    else
+        return 1
+    fi
     
-    local result=$?
-    rm -f "/tmp/config_${num}.json"
-    return $result
+    # Пробуем подключиться через curl (проверяем доступность порта)
+    # Используем --socks5 если это vless/vmess, иначе просто проверяем порт
+    if [[ "$PROTOCOL" == "vless" ]] || [[ "$PROTOCOL" == "vmess" ]]; then
+        # Для vless/vmess используем socks5 прокси
+        timeout $TIMEOUT curl -s --socks5-hostname "$IP:$PORT" https://google.com -o /dev/null -w "%{http_code}" 2>/dev/null | grep -q "200"
+        return $?
+    else
+        # Для обычных ключей проверяем доступность порта
+        timeout $TIMEOUT nc -zv "$IP" "$PORT" > /dev/null 2>&1
+        return $?
+    fi
 }
 
-# ----- ШАГ 4: ПРОВЕРКА КЛЮЧЕЙ -----
+# ----- ШАГ 3: ПРОВЕРКА КЛЮЧЕЙ -----
 TOTAL=$(wc -l < "$KEYS_TO_CHECK")
 echo ""
-echo "🚀 ШАГ 3: Проверка $TOTAL ключей через Xray"
+echo "🚀 ШАГ 2: Проверка $TOTAL ключей через curl"
 echo "========================================="
-echo "   ⏱️  Таймаут на ключ: ${TIMEOUT_PER_KEY}с"
+echo "   ⏱️  Таймаут на ключ: ${TIMEOUT}с"
 echo "   ⏱️  Максимальное время: ${MAX_TOTAL_TIME}с"
-echo "   📊 Ключей к проверке: $TOTAL"
 echo "========================================="
 echo ""
 
@@ -104,10 +98,7 @@ ALIVE=0
 DEAD=0
 COUNT=0
 > "alive_temp.txt"
-
-# Создаем лог-файл
-LOG_FILE="check_log.txt"
-> "$LOG_FILE"
+> "check_log.txt"
 
 while IFS= read -r key; do
     # Проверка времени
@@ -117,7 +108,6 @@ while IFS= read -r key; do
     if [ "$ELAPSED" -gt "$MAX_TOTAL_TIME" ]; then
         echo ""
         echo "⏰ Достигнут лимит времени ($MAX_TOTAL_TIME с)"
-        echo "   ➜ Проверено $COUNT из $TOTAL ключей"
         break
     fi
     
@@ -128,28 +118,29 @@ while IFS= read -r key; do
     COUNT=$((COUNT + 1))
     PERCENT=$((COUNT * 100 / TOTAL))
     
+    # Засекаем время проверки
+    KEY_START=$(date +%s)
+    
     # Показываем прогресс
     echo -ne "\r  ⏳ $COUNT/$TOTAL ($PERCENT%) | ✅ $ALIVE | ❌ $DEAD | ⏱️  ${ELAPSED}с"
     
-    # Засекаем время проверки конкретного ключа
-    KEY_START=$(date +%s)
-    
-    if check_key "$key" "$COUNT"; then
+    # Проверяем ключ
+    if check_key "$key"; then
         KEY_TIME=$(( $(date +%s) - KEY_START ))
         echo "$key" >> "alive_temp.txt"
         ALIVE=$((ALIVE + 1))
-        echo "✅ Ключ #$COUNT ЖИВ (${KEY_TIME}с)" >> "$LOG_FILE"
+        echo "✅ Ключ #$COUNT ЖИВ (${KEY_TIME}с)" >> "check_log.txt"
     else
         KEY_TIME=$(( $(date +%s) - KEY_START ))
         DEAD=$((DEAD + 1))
-        echo "❌ Ключ #$COUNT МЕРТВ (${KEY_TIME}с)" >> "$LOG_FILE"
+        echo "❌ Ключ #$COUNT МЕРТВ (${KEY_TIME}с)" >> "check_log.txt"
     fi
     
 done < "$KEYS_TO_CHECK"
 
 echo "" # Переход на новую строку
 
-# ----- ШАГ 5: СОХРАНЕНИЕ РЕЗУЛЬТАТА -----
+# ----- ШАГ 4: СОХРАНЕНИЕ РЕЗУЛЬТАТА -----
 mv "alive_temp.txt" "$WORK_FILE"
 FINAL_COUNT=$(wc -l < "$WORK_FILE")
 
@@ -166,7 +157,7 @@ echo "   ✅ Живых: $ALIVE"
 echo "   ❌ Мертвых: $DEAD"
 echo "   📁 Сохранено в WorkKey.txt ($FINAL_COUNT ключей)"
 echo "   ⏱️  Общее время: ${MINUTES}м ${SECONDS}с"
-echo "   📋 Детальный лог: $LOG_FILE"
+echo "   📋 Детальный лог: check_log.txt"
 echo "========================================="
 
 # Если все мертвы
