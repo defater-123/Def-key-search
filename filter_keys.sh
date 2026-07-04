@@ -1,89 +1,51 @@
 #!/bin/bash
 
 # ============================================
-# VPN KEY FILTER v5.0 - ДЛЯ 1000 КЛЮЧЕЙ
-# Оптимизирован с запасом 15 минут на задержки
+# VPN KEY FILTER v6.0 - РАБОТАЕТ С WorkKey.txt
+# Первый запуск: скачивает key1.txt
+# Последующие: проверяет только WorkKey.txt
 # ============================================
 
 echo "========================================="
-echo "VPN Key Filter v5.0 (Xray + 15min buffer)"
+echo "VPN Key Filter v6.0 (Smart Mode)"
 echo "Время запуска: $(date)"
 echo "========================================="
 
-# ----- НАСТРОЙКИ (меняйте здесь) -----
-
-# ССЫЛКА НА ВАШ РЕПОЗИТОРИЙ С КЛЮЧАМИ
+# ----- НАСТРОЙКИ -----
 SOURCE_URL="https://github.com/defater-123/Def-key-search/raw/refs/heads/main/key1.txt"
-
-# ИМЯ ВЫХОДНОГО ФАЙЛА
-OUTPUT_FILE="WorkKey.txt"
-
-# ТАЙМАУТ НА КЛЮЧ (секунды) - увеличен для надежности
+WORK_FILE="WorkKey.txt"
+SOURCE_FILE="key1.txt"
 TIMEOUT_PER_KEY=5
+MAX_TOTAL_TIME=900  # 15 минут
 
-# МАКСИМАЛЬНОЕ ВРЕМЯ ВСЕЙ ПРОВЕРКИ (секунды) - 15 минут запас
-MAX_TOTAL_TIME=900  # 15 минут = 900 секунд
-
-# ----- НЕ МЕНЯТЬ НИЖЕ ЭТОЙ СТРОКИ -----
-
-# Создаем временные файлы
-TEMP_DIR="temp_xray"
-mkdir -p "$TEMP_DIR"
-> "$OUTPUT_FILE"
-> "alive_temp.txt"
-
-# Скачиваем файлы с ключами
+# ----- ПРОВЕРЯЕМ, СУЩЕСТВУЕТ ЛИ WorkKey.txt -----
 echo ""
-echo "📥 Скачиваю ключи из репозитория..."
-
-# Список файлов для скачивания (добавьте свои)
-FILES=(
-    "key1.txt"
-    "key2.txt"
-    "key3.txt"
-    "key4.txt"
-    "key5.txt"
-)
-
-ALL_KEYS="all_keys_temp.txt"
-> "$ALL_KEYS"
-
-for file in "${FILES[@]}"; do
-    echo "  ⬇️  Скачиваю $file..."
-    curl -s -L -o "${TEMP_DIR}/$file" "${SOURCE_URL}${file}"
+if [ -f "$WORK_FILE" ] && [ -s "$WORK_FILE" ]; then
+    echo "📂 Найден существующий $WORK_FILE с $(wc -l < $WORK_FILE) ключами"
+    echo "🔄 Буду проверять только его (не скачивая новые ключи)"
+    KEYS_TO_CHECK="$WORK_FILE"
+    IS_FIRST_RUN=false
+else
+    echo "📥 WorkKey.txt не найден или пуст. Первый запуск!"
+    echo "⬇️  Скачиваю $SOURCE_URL..."
+    curl -L -o "$SOURCE_FILE" "$SOURCE_URL"
     
-    if [ -s "${TEMP_DIR}/$file" ]; then
-        cat "${TEMP_DIR}/$file" >> "$ALL_KEYS"
-        echo "  ✅ Добавлено $(wc -l < ${TEMP_DIR}/$file) ключей"
-    else
-        echo "  ⚠️  Файл $file не найден или пуст"
+    if [ ! -s "$SOURCE_FILE" ]; then
+        echo "❌ ОШИБКА: Не удалось скачать ключи!"
+        exit 1
     fi
-done
-
-# Удаляем дубликаты и пустые строки
-sort -u "$ALL_KEYS" -o "$ALL_KEYS"
-sed -i '/^[[:space:]]*$/d' "$ALL_KEYS"
-
-TOTAL=$(wc -l < "$ALL_KEYS")
-echo ""
-echo "📊 Всего уникальных ключей: $TOTAL"
-
-# Если ключей больше 1000 - обрезаем до 1000 (для безопасности)
-if [ "$TOTAL" -gt 1000 ]; then
-    echo "⚠️  Обнаружено более 1000 ключей ($TOTAL)"
-    echo "✂️  Обрезаю до первых 1000 для сохранения времени..."
-    head -n 1000 "$ALL_KEYS" > "${ALL_KEYS}.tmp"
-    mv "${ALL_KEYS}.tmp" "$ALL_KEYS"
-    TOTAL=1000
-    echo "✅ Теперь ключей: $TOTAL"
+    
+    echo "✅ Скачано $(wc -l < $SOURCE_FILE) ключей"
+    KEYS_TO_CHECK="$SOURCE_FILE"
+    IS_FIRST_RUN=true
 fi
 
 # ----- УСТАНОВКА XRAY -----
 echo ""
-echo "📦 Устанавливаю Xray..."
+echo "📦 Проверяю наличие Xray..."
 
 if ! command -v xray &> /dev/null; then
-    echo "  ⬇️  Скачиваю Xray..."
+    echo "  ⬇️  Устанавливаю Xray..."
     wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -O xray.zip
     unzip -q xray.zip
     chmod +x xray
@@ -98,43 +60,28 @@ fi
 check_key() {
     local key="$1"
     local key_num="$2"
-    local total="$3"
     
-    # Создаем временный конфиг для Xray
-    cat > "${TEMP_DIR}/config_${key_num}.json" << EOF
+    # Создаем временный конфиг
+    cat > "/tmp/config_${key_num}.json" << EOF
 {
-  "log": {
-    "loglevel": "error"
-  },
-  "inbounds": [
-    {
-      "port": 1080,
-      "protocol": "socks"
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom"
-    }
-  ]
+  "log": {"loglevel": "error"},
+  "inbounds": [{"port": 1080, "protocol": "socks"}],
+  "outbounds": [{"protocol": "freedom"}]
 }
 EOF
     
-    # Запускаем Xray с проверкой ключа
     timeout "$TIMEOUT_PER_KEY" xray run \
-        -config "${TEMP_DIR}/config_${key_num}.json" \
+        -config "/tmp/config_${key_num}.json" \
         -outbound "$key" \
         > /dev/null 2>&1
     
     local result=$?
-    
-    # Удаляем временный конфиг
-    rm -f "${TEMP_DIR}/config_${key_num}.json"
-    
+    rm -f "/tmp/config_${key_num}.json"
     return $result
 }
 
-# ----- ОСНОВНАЯ ПРОВЕРКА (с таймером) -----
+# ----- ПРОВЕРКА КЛЮЧЕЙ -----
+TOTAL=$(wc -l < "$KEYS_TO_CHECK")
 echo ""
 echo "🔍 Начинаю проверку $TOTAL ключей..."
 echo "⏱️  Таймаут на ключ: ${TIMEOUT_PER_KEY}с"
@@ -145,20 +92,17 @@ START_TIME=$(date +%s)
 ALIVE=0
 DEAD=0
 COUNT=0
-SKIPPED=0
+> "alive_temp.txt"
 
-# Проверяем каждый ключ
 while IFS= read -r key; do
     # Проверяем время
     CURRENT_TIME=$(date +%s)
     ELAPSED=$((CURRENT_TIME - START_TIME))
     
-    # Если прошло больше 15 минут - прерываем
     if [ "$ELAPSED" -gt "$MAX_TOTAL_TIME" ]; then
         echo ""
         echo "⏰ Достигнут лимит времени (15 минут)"
-        echo "   Проверено: $COUNT | Пропущено: $(($TOTAL - $COUNT))"
-        SKIPPED=$(($TOTAL - $COUNT))
+        echo "   Проверено: $COUNT из $TOTAL"
         break
     fi
     
@@ -167,54 +111,51 @@ while IFS= read -r key; do
     fi
     
     COUNT=$((COUNT + 1))
-    
-    # Вывод прогресса (обновляется в той же строке)
     PERCENT=$((COUNT * 100 / TOTAL))
-    echo -ne "\r  ⏳ Прогресс: $COUNT/$TOTAL ($PERCENT%) | ✅ Живых: $ALIVE | ❌ Мертвых: $DEAD | ⏱️  ${ELAPSED}с"
+    echo -ne "\r  ⏳ $COUNT/$TOTAL ($PERCENT%) | ✅ $ALIVE | ❌ $DEAD | ⏱️  ${ELAPSED}с"
     
-    # Проверяем ключ через Xray
-    if check_key "$key" "$COUNT" "$TOTAL"; then
+    if check_key "$key" "$COUNT"; then
         echo "$key" >> "alive_temp.txt"
         ALIVE=$((ALIVE + 1))
     else
         DEAD=$((DEAD + 1))
     fi
     
-done < "$ALL_KEYS"
+done < "$KEYS_TO_CHECK"
 
 echo "" # Переход на новую строку
 
-# ----- СОХРАНЕНИЕ РЕЗУЛЬТАТА -----
-mv "alive_temp.txt" "$OUTPUT_FILE"
+# ----- СОХРАНЯЕМ РЕЗУЛЬТАТ -----
+mv "alive_temp.txt" "$WORK_FILE"
 
 # Финальная статистика
-FINAL_TOTAL=$(wc -l < "$OUTPUT_FILE")
 TOTAL_TIME=$(( $(date +%s) - START_TIME ))
 MINUTES=$((TOTAL_TIME / 60))
 SECONDS=$((TOTAL_TIME % 60))
+FINAL_COUNT=$(wc -l < "$WORK_FILE")
 
 echo ""
 echo "========================================="
-echo "📊 ИТОГОВЫЕ РЕЗУЛЬТАТЫ:"
-echo "   Всего ключей в начале: $TOTAL"
-echo "   Проверено ключей: $COUNT"
-echo "   Пропущено (из-за времени): $SKIPPED"
-echo "   ✅ Живых ключей: $ALIVE"
-echo "   ❌ Мертвых ключей: $DEAD"
-echo "   📁 Сохранено в: $OUTPUT_FILE ($FINAL_TOTAL ключей)"
-echo "   ⏱️  Общее время: ${MINUTES}м ${SECONDS}с"
+echo "📊 РЕЗУЛЬТАТЫ:"
+echo "   Источник: $KEYS_TO_CHECK"
+echo "   Проверено: $COUNT"
+echo "   ✅ Живых: $ALIVE"
+echo "   ❌ Мертвых: $DEAD"
+echo "   📁 Сохранено в: $WORK_FILE ($FINAL_COUNT ключей)"
+echo "   ⏱️  Время: ${MINUTES}м ${SECONDS}с"
 echo "========================================="
 
-# Если все ключи мертвы - предупреждение
-if [ ! -s "$OUTPUT_FILE" ]; then
+# Если ключей нет - скачиваем новые
+if [ ! -s "$WORK_FILE" ]; then
     echo ""
-    echo "⚠️  ВНИМАНИЕ: Все ключи мертвы!"
-    echo "   Добавьте новые файлы key1.txt, key2.txt и т.д."
+    echo "⚠️  Все ключи мертвы! Скачиваю свежие..."
+    curl -L -o "$SOURCE_FILE" "$SOURCE_URL"
+    echo "✅ Скачано $(wc -l < $SOURCE_FILE) ключей"
+    echo "🔄 Запустите workflow снова для проверки новых ключей"
 fi
 
-# ----- ОЧИСТКА -----
-rm -rf "$TEMP_DIR"
-rm -f "$ALL_KEYS"
+# Удаляем временные файлы
+rm -f "$SOURCE_FILE" 2>/dev/null
 
 echo ""
 echo "✅ Работа скрипта завершена"
