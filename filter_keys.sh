@@ -13,7 +13,7 @@ echo "========================================="
 # ----- НАСТРОЙКИ (меняйте здесь) -----
 
 # ССЫЛКА НА ВАШ РЕПОЗИТОРИЙ С КЛЮЧАМИ
-SOURCE_URL="https://raw.githubusercontent.com/ВАШ_АККАУНТ/ВАШ_РЕПО/main/"
+SOURCE_URL="https://github.com/defater-123/Def-key-search/raw/refs/heads/main/key1.txt"
 
 # ИМЯ ВЫХОДНОГО ФАЙЛА
 OUTPUT_FILE="WorkKey.txt"
