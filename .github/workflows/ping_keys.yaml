@@ -1,0 +1,192 @@
+name: 📡 Пинг VPN-ключей
+
+on:
+  schedule:
+    - cron: "0 * * * *"      # Каждый час
+  workflow_dispatch:          # Ручной запуск
+
+jobs:
+  ping-keys:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Загрузка репозитория
+        uses: actions/checkout@v4
+
+      - name: 🐍 Подготовка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 📦 Установка зависимостей
+        run: |
+          echo "⏳ Устанавливаю зависимости..."
+          pip install --no-cache-dir requests
+
+      - name: 📡 Пинг ключей
+        run: |
+          python - << 'EOF'
+import re
+import subprocess
+import os
+import time
+from datetime import datetime
+
+# === НАСТРОЙКИ ===
+SOURCE_URL = "https://raw.githubusercontent.com/defater-123/Def-vpn-Goida/main/githubmirror/all.txt"
+OUTPUT_DIR = "githubmirror"
+PING_COUNT = 2
+TIMEOUT = 5
+
+# === ФУНКЦИИ ===
+def download_keys(url):
+    """Скачивает ключи из репозитория"""
+    import requests
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return [line.strip() for line in response.text.splitlines() if line.strip()]
+    except Exception as e:
+        print(f"❌ Ошибка скачивания: {e}")
+        return []
+
+def extract_ip(key):
+    """Извлекает IP из ключа"""
+    # vless://uuid@IP:PORT
+    match = re.search(r'@([^:]+):', key)
+    if match:
+        return match.group(1)
+    
+    # vmess://uuid@IP:PORT
+    match = re.search(r'://([^@]+)@([^:]+):', key)
+    if match:
+        return match.group(2)
+    
+    # trojan://uuid@IP:PORT
+    match = re.search(r'trojan://[^@]+@([^:]+):', key)
+    if match:
+        return match.group(1)
+    
+    # Просто IP:PORT
+    match = re.search(r'(\d+\.\d+\.\d+\.\d+):', key)
+    if match:
+        return match.group(1)
+    
+    return None
+
+def ping_ip(ip):
+    """Проверяет доступность IP через ping"""
+    try:
+        result = subprocess.run(
+            ['ping', '-c', str(PING_COUNT), '-W', str(TIMEOUT), ip],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT + 2
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def save_keys(keys, filename):
+    """Сохраняет ключи в файл"""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(f"{OUTPUT_DIR}/{filename}", 'w') as f:
+        f.write('\n'.join(keys))
+
+# === ОСНОВНАЯ ЛОГИКА ===
+print("📡 Запуск проверки ключей...")
+print(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
+print()
+
+# 1. Скачиваем ключи
+print("📥 Скачиваю ключи из источника...")
+keys = download_keys(SOURCE_URL)
+if not keys:
+    print("❌ Не удалось получить ключи!")
+    exit(1)
+print(f"✅ Загружено {len(keys)} ключей")
+
+# 2. Извлекаем уникальные IP
+print("🔍 Извлекаю IP-адреса...")
+ip_to_keys = {}
+for key in keys:
+    ip = extract_ip(key)
+    if ip:
+        if ip not in ip_to_keys:
+            ip_to_keys[ip] = []
+        ip_to_keys[ip].append(key)
+
+print(f"✅ Найдено {len(ip_to_keys)} уникальных IP-адресов")
+
+# 3. Пингуем каждый IP
+print("📡 Проверяю доступность IP...")
+alive_keys = []
+total = len(ip_to_keys)
+checked = 0
+
+for ip, key_list in ip_to_keys.items():
+    checked += 1
+    print(f"  ⏳ {checked}/{total}: {ip}", end=" ")
+    
+    if ping_ip(ip):
+        print("✅ ЖИВ")
+        alive_keys.extend(key_list)
+    else:
+        print("❌ МЕРТВ")
+    
+    # Небольшая задержка, чтобы не перегружать сеть
+    time.sleep(0.5)
+
+# 4. Сохраняем результаты
+print()
+print("💾 Сохраняю результаты...")
+
+# Все ключи (без фильтрации)
+save_keys(keys, "all.txt")
+
+# Только живые ключи
+save_keys(alive_keys, "alive.txt")
+
+# Топ-50 живых (первые 50)
+save_keys(alive_keys[:50], "top_50.txt")
+
+# 5. Статистика
+print()
+print("=========================================")
+print("📊 СТАТИСТИКА")
+print("=========================================")
+print(f"  Всего ключей:          {len(keys)}")
+print(f"  Уникальных IP:         {len(ip_to_keys)}")
+print(f"  Живых ключей:          {len(alive_keys)}")
+print(f"  Процент выживаемости:  {len(alive_keys)/len(keys)*100:.1f}%")
+print("=========================================")
+print("✅ Файлы сохранены в папке githubmirror/")
+print("  • all.txt      — все ключи")
+print("  • alive.txt    — только живые ключи")
+print("  • top_50.txt   — 50 живых ключей")
+EOF
+
+      - name: 📤 Сохранение результатов
+        run: |
+          echo "⏳ Отправляю обновления в репозиторий..."
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add githubmirror/
+          git diff --staged --quiet || git commit -m "🔄 Обновление ключей $(date '+%d.%m.%Y %H:%M')"
+          git push
+          echo "✅ Обновления отправлены"
+
+      - name: 🎉 Завершение
+        run: |
+          echo ""
+          echo "========================================="
+          echo "✅  ВСЕ ШАГИ ЗАВЕРШЕНЫ!"
+          echo "========================================="
+          echo ""
+          echo "📁 Файлы созданы в папке githubmirror/:"
+          echo "  📄 all.txt      — все ключи"
+          echo "  📄 alive.txt    — только живые ключи"
+          echo "  📄 top_50.txt   — 50 живых ключей"
+          echo "========================================="
