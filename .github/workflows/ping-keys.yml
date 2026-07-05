@@ -27,119 +27,119 @@ jobs:
 
       - name: Ping keys
         run: |
-          python -c "
-import re
-import subprocess
-import os
-import time
-from datetime import datetime
+          python << 'EOF'
+          import re
+          import subprocess
+          import os
+          import time
+          from datetime import datetime
+          import requests
 
-SOURCE_URL = 'https://raw.githubusercontent.com/defater-123/Def-vpn-Goida/main/githubmirror/all.txt'
-OUTPUT_DIR = 'githubmirror'
-PING_COUNT = 2
-TIMEOUT = 5
+          SOURCE_URL = "https://raw.githubusercontent.com/defater-123/Def-vpn-Goida/main/githubmirror/all.txt"
+          OUTPUT_DIR = "githubmirror"
+          PING_COUNT = 2
+          TIMEOUT = 5
 
-def download_keys(url):
-    import requests
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return [line.strip() for line in response.text.splitlines() if line.strip()]
-    except Exception as e:
-        print(f'Error downloading: {e}')
-        return []
+          def download_keys(url):
+              try:
+                  response = requests.get(url, timeout=10)
+                  response.raise_for_status()
+                  return [line.strip() for line in response.text.splitlines() if line.strip()]
+              except Exception as e:
+                  print(f"Error downloading: {e}")
+                  return []
 
-def extract_ip(key):
-    match = re.search(r'@([^:]+):', key)
-    if match:
-        return match.group(1)
-    match = re.search(r'://([^@]+)@([^:]+):', key)
-    if match:
-        return match.group(2)
-    match = re.search(r'trojan://[^@]+@([^:]+):', key)
-    if match:
-        return match.group(1)
-    match = re.search(r'(\d+\.\d+\.\d+\.\d+):', key)
-    if match:
-        return match.group(1)
-    return None
+          def extract_ip(key):
+              match = re.search(r'@([^:]+):', key)
+              if match:
+                  return match.group(1)
+              match = re.search(r'://([^@]+)@([^:]+):', key)
+              if match:
+                  return match.group(2)
+              match = re.search(r'trojan://[^@]+@([^:]+):', key)
+              if match:
+                  return match.group(1)
+              match = re.search(r'(\d+\.\d+\.\d+\.\d+):', key)
+              if match:
+                  return match.group(1)
+              return None
 
-def ping_ip(ip):
-    try:
-        result = subprocess.run(
-            ['ping', '-c', str(PING_COUNT), '-W', str(TIMEOUT), ip],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT + 2
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+          def ping_ip(ip):
+              try:
+                  result = subprocess.run(
+                      ['ping', '-c', str(PING_COUNT), '-W', str(TIMEOUT), ip],
+                      capture_output=True,
+                      text=True,
+                      timeout=TIMEOUT + 2
+                  )
+                  return result.returncode == 0
+              except Exception:
+                  return False
 
-def save_keys(keys, filename):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with open(f'{OUTPUT_DIR}/{filename}', 'w') as f:
-        f.write('\n'.join(keys))
+          def save_keys(keys, filename):
+              os.makedirs(OUTPUT_DIR, exist_ok=True)
+              with open(f"{OUTPUT_DIR}/{filename}", 'w') as f:
+                  f.write('\n'.join(keys))
 
-print('Starting key check...')
-print(f'Time: {datetime.now().strftime('%H:%M:%S')}')
-print()
+          print("Starting key check...")
+          print(f"Time: {datetime.now().strftime('%H:%M:%S')}")
+          print()
 
-print('Downloading keys...')
-keys = download_keys(SOURCE_URL)
-if not keys:
-    print('Failed to get keys!')
-    exit(1)
-print(f'Loaded {len(keys)} keys')
+          print("Downloading keys...")
+          keys = download_keys(SOURCE_URL)
+          if not keys:
+              print("Failed to get keys!")
+              exit(1)
+          print(f"Loaded {len(keys)} keys")
 
-print('Extracting IP addresses...')
-ip_to_keys = {}
-for key in keys:
-    ip = extract_ip(key)
-    if ip:
-        if ip not in ip_to_keys:
-            ip_to_keys[ip] = []
-        ip_to_keys[ip].append(key)
+          print("Extracting IP addresses...")
+          ip_to_keys = {}
+          for key in keys:
+              ip = extract_ip(key)
+              if ip:
+                  if ip not in ip_to_keys:
+                      ip_to_keys[ip] = []
+                  ip_to_keys[ip].append(key)
 
-print(f'Found {len(ip_to_keys)} unique IPs')
+          print(f"Found {len(ip_to_keys)} unique IPs")
 
-print('Pinging IPs...')
-alive_keys = []
-total = len(ip_to_keys)
-checked = 0
+          print("Pinging IPs...")
+          alive_keys = []
+          total = len(ip_to_keys)
+          checked = 0
 
-for ip, key_list in ip_to_keys.items():
-    checked += 1
-    print(f'  {checked}/{total}: {ip}', end=' ')
-    
-    if ping_ip(ip):
-        print('ALIVE')
-        alive_keys.extend(key_list)
-    else:
-        print('DEAD')
-    
-    time.sleep(0.5)
+          for ip, key_list in ip_to_keys.items():
+              checked += 1
+              print(f"  {checked}/{total}: {ip}", end=" ")
 
-print()
-print('Saving results...')
-save_keys(keys, 'all.txt')
-save_keys(alive_keys, 'alive.txt')
-save_keys(alive_keys[:50], 'top_50.txt')
+              if ping_ip(ip):
+                  print("ALIVE")
+                  alive_keys.extend(key_list)
+              else:
+                  print("DEAD")
 
-print()
-print('=========================================')
-print('STATISTICS')
-print('=========================================')
-print(f'  Total keys:          {len(keys)}')
-print(f'  Unique IPs:          {len(ip_to_keys)}')
-print(f'  Alive keys:          {len(alive_keys)}')
-print(f'  Survival rate:       {len(alive_keys)/len(keys)*100:.1f}%')
-print('=========================================')
-print('Files saved in githubmirror/')
-print('  • all.txt      - all keys')
-print('  • alive.txt    - only alive keys')
-print('  • top_50.txt   - 50 alive keys')
-"
+              time.sleep(0.5)
+
+          print()
+          print("Saving results...")
+          save_keys(keys, "all.txt")
+          save_keys(alive_keys, "alive.txt")
+          save_keys(alive_keys[:50], "top_50.txt")
+
+          print()
+          print("=========================================")
+          print("STATISTICS")
+          print("=========================================")
+          print(f"  Total keys:          {len(keys)}")
+          print(f"  Unique IPs:          {len(ip_to_keys)}")
+          print(f"  Alive keys:          {len(alive_keys)}")
+          print(f"  Survival rate:       {len(alive_keys)/len(keys)*100:.1f}%")
+          print("=========================================")
+          print("Files saved in githubmirror/")
+          print("  • all.txt      - all keys")
+          print("  • alive.txt    - only alive keys")
+          print("  • top_50.txt   - 50 alive keys")
+          EOF
 
       - name: Save results
         run: |
